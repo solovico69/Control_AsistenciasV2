@@ -1,8 +1,8 @@
 import { OfficeConfig } from '../types';
 
 /**
- * Genera el código completo y actualizado de Google Apps Script (Codigo.gs) Versión 2.5
- * para la integración satelital, geofencing, protección de fórmulas, Web Push y triggers automáticos.
+ * Genera el código completo y actualizado de Google Apps Script (Codigo.gs) Versión 2.6
+ * con Inteligencia Centralizada en Railway, Horarios Dinámicos y Protección de Fórmulas.
  */
 export function getGasScriptCode(config: OfficeConfig): string {
   const lat = config?.latitud ?? 10.494505;
@@ -15,16 +15,26 @@ export function getGasScriptCode(config: OfficeConfig): string {
  * SISTEMA DE CONTROL DE ASISTENCIAS - SILOCOM C.A.
  * RIF: J-30725192-1
  * Archivo: Codigo.gs (Google Apps Script)
- * Versión: 2.5 (Con Notificaciones Push Remotas y Cierre Automático)
+ * Versión: 2.6 (Inteligencia Centralizada en Railway & Horarios Dinámicos)
  * =========================================================================
- * Instrucciones:
+ * 🚀 NOVEDAD ARQUITECTÓNICA (Sin Triggers en Google Apps Script):
+ * A partir de esta versión, YA NO ES NECESARIO instalar activadores/triggers
+ * en el reloj de Google Apps Script.
+ * 
+ * El servidor persistente de Silocom en Railway (Node.js 24/7):
+ * 1. Lee automáticamente tus horarios desde la hoja 'Configuracion' (7:45, 8:30, 16:30, 17:30).
+ * 2. Si cambias los horarios en Sheets, Railway los detecta dinámicamente sin reinstalar código.
+ * 3. Despacha todos los recordatorios Push a los celulares sin depender de la cuota de Google.
+ * 4. Invoca el cierre automático diario de turnos a la hora fijada.
+ * 
+ * Pasos de Implementación:
  * 1. Abre tu Google Sheets "Control de Asistencias - Silocom".
  * 2. Ve a Extensiones > Apps Script.
  * 3. Selecciona todo (Ctrl + A), bórralo y pega este código completo.
  * 4. Guarda con el botón del Disquete (Ctrl + S).
- * 5. En el menú desplegable superior, selecciona la función "instalarTriggersHorarios"
- *    y haz clic en ▶ Ejecutar (Instalará las alertas de 07:45, 08:30, 16:30 y el cierre de 17:30).
- * 6. Haz clic en "Implementar > Gestionar implementaciones > Editar (lápiz) > Nueva versión > Implementar".
+ * 5. Haz clic en "Implementar > Gestionar implementaciones > Editar (lápiz) > Nueva versión > Implementar".
+ * 6. (Opcional) Si tenías activadores viejos en Google, ejecuta la función
+ *    "eliminarTriggersHorarios" para limpiarlos.
  * =========================================================================
  */
 
@@ -32,7 +42,7 @@ const CONFIG = {
   HOJA_ASISTENCIAS: 'Asistencias',
   HOJA_CONFIG: 'Configuracion',
   HOJA_PUSH: 'DispositivosPush',
-  URL_VERCEL_PUSH: 'https://silocom.vercel.app/api/send-push',
+  URL_PUSH_SERVER: 'https://silocom-production.up.railway.app/api/send-push', // Coloca aquí la URL pública de tu app en Railway (ej: https://silocom-production.up.railway.app/api/send-push)
   PUSH_SECRET: 'silocom_push_sec_2026',
   LATITUD_OFICINA: ${lat},
   LONGITUD_OFICINA: ${lng},
@@ -87,17 +97,13 @@ function doGet(e) {
       });
     }
 
-    if (action === 'probarPushRemoto') {
-      return respuestaJSON(enviarPushRemoto(
-        'Silocom C.A. - Notificación Remota',
-        'Prueba de despacho remoto ejecutada desde Google Apps Script.',
-        'silocom-test-remoto'
-      ));
+    if (action === 'probarPushRemoto' || action === 'probarPushDesdeGAS') {
+      return respuestaJSON(probarPushDesdeGAS());
     }
 
     return respuestaJSON({
       status: 'ok',
-      message: 'API Silocom Asistencias en línea (Versión 2.5).'
+      message: 'API Silocom Asistencias en línea (Versión 2.6 - Centralizada en Railway).'
     });
   } catch (err) {
     return respuestaJSON({
@@ -407,15 +413,17 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
     }
 
     const cfg = obtenerConfiguracionDinamica();
-    const urlVercel = cfg.urlVercelPush || CONFIG.URL_VERCEL_PUSH;
+    const urlPushServer = cfg.urlPushServer || CONFIG.URL_PUSH_SERVER;
 
     const payload = {
       secret: CONFIG.PUSH_SECRET,
       subscriptions: subs,
-      notification: {
-        title: titulo || 'Silocom C.A. - Recordatorio',
-        body: cuerpo || 'Recordatorio de asistencia de jornada laboral.',
-        tag: tag || 'silocom-push-reminder'
+      title: titulo || 'Silocom C.A. - Recordatorio',
+      body: cuerpo || 'Recordatorio de asistencia de jornada laboral.',
+      tag: tag || 'silocom-push-reminder',
+      data: {
+        url: '/',
+        timestamp: new Date().getTime()
       }
     };
 
@@ -426,7 +434,7 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
       muteHttpExceptions: true
     };
 
-    const response = UrlFetchApp.fetch(urlVercel, options);
+    const response = UrlFetchApp.fetch(urlPushServer, options);
     const code = response.getResponseCode();
     const text = response.getContentText();
 
@@ -442,11 +450,35 @@ function enviarPushRemoto(titulo, cuerpo, tag, filtroUserId) {
       statusCode: code,
       enviados: jsonRes.sent || 0,
       fallidos: jsonRes.failed || 0,
-      message: 'Despacho completado. Respuesta Vercel: ' + text
+      message: 'Despacho completado. Respuesta Servidor Push: ' + text
     };
   } catch (err) {
-    return { success: false, message: 'Error en llamada a Vercel Push: ' + err.message };
+    return { success: false, message: 'Error en llamada a Servidor Push: ' + err.message };
   }
+}
+
+function enviarPushNotificacion(titulo, cuerpo, tag, filtroUserId) {
+  return enviarPushRemoto(titulo, cuerpo, tag, filtroUserId);
+}
+
+function enviarPushRecordatorioEntrada() {
+  return disparadorManana0745();
+}
+
+function enviarPushOlvidoEntrada() {
+  return disparadorOlvido0830();
+}
+
+function enviarPushRecordatorioSalida() {
+  return disparadorSalida1630();
+}
+
+function probarPushDesdeGAS() {
+  return enviarPushRemoto(
+    'Silocom C.A. - Notificación Remota de Prueba',
+    'Prueba de despacho remoto ejecutada exitosamente desde Google Apps Script hacia el Servidor Push.',
+    'silocom-test-remoto'
+  );
 }
 
 function desactivarEndpointsCaducados(endpointsCaducados) {
@@ -694,6 +726,29 @@ function obtenerListaEmpleados() {
   return empleados;
 }
 
+function formatearHoraCadena(val, fallback) {
+  if (val === null || val === undefined || val === '') return fallback;
+  if (val instanceof Date) {
+    var h = val.getHours();
+    var m = val.getMinutes();
+    return (h < 10 ? '0' + h : '' + h) + ':' + (m < 10 ? '0' + m : '' + m);
+  }
+  var str = val.toString().trim();
+  var match = str.match(/^(\d{1,2}):(\d{2})/);
+  if (match) {
+    var h = parseInt(match[1], 10);
+    var m = match[2];
+    return (h < 10 ? '0' + h : '' + h) + ':' + m;
+  }
+  var num = parseFloat(str);
+  if (!isNaN(num) && num >= 0 && num < 24) {
+    var h = Math.floor(num);
+    var m = Math.round((num - h) * 60);
+    return (h < 10 ? '0' + h : '' + h) + ':' + (m < 10 ? '0' + m : '' + m);
+  }
+  return fallback;
+}
+
 function obtenerConfiguracionDinamica() {
   const configDinamica = {
     latitud: CONFIG.LATITUD_OFICINA,
@@ -709,9 +764,9 @@ function obtenerConfiguracionDinamica() {
     ventanaEntradaFin: CONFIG.VENTANA_ENTRADA_FIN,
     ventanaSalidaInicio: CONFIG.VENTANA_SALIDA_INI,
     ventanaSalidaFin: CONFIG.VENTANA_SALIDA_FIN,
-    cierreAutomatico: CONFIG.CIERRE_AUTOMATICO,
+    cierreAutomatico: '17:30',
     adminEmail: CONFIG.ADMIN_EMAIL,
-    urlVercelPush: CONFIG.URL_VERCEL_PUSH
+    urlPushServer: CONFIG.URL_PUSH_SERVER
   };
 
   try {
@@ -719,26 +774,99 @@ function obtenerConfiguracionDinamica() {
     const hojaConfig = ss.getSheetByName(CONFIG.HOJA_CONFIG);
     if (!hojaConfig) return configDinamica;
 
-    const datos = hojaConfig.getRange(1, 1, 6, 4).getValues();
+    // 1. LECTURA DIRECTA POR CELDAS (Estructura oficial de Silocom C.A.)
+    // Tabla Superior (Filas 1 y 2):
+    // A2: Latitud (10.494505) | B2: Longitud (-66.831454) | C2: Radio (60 m) | D2: Administrador (silocomca)
+    try {
+      const valA2 = hojaConfig.getRange('A2').getValue();
+      const valB2 = hojaConfig.getRange('B2').getValue();
+      const valC2 = hojaConfig.getRange('C2').getValue();
+      const valD2 = hojaConfig.getRange('D2').getValue();
+
+      if (valA2 !== '' && !isNaN(parseFloat(valA2))) configDinamica.latitud = parseFloat(valA2);
+      if (valB2 !== '' && !isNaN(parseFloat(valB2))) configDinamica.longitud = parseFloat(valB2);
+      if (valC2 !== '' && !isNaN(parseFloat(valC2))) {
+        const rNum = parseFloat(valC2);
+        configDinamica.radioMaxKm = rNum > 1 ? rNum / 1000 : rNum;
+      }
+      if (valD2 !== '') configDinamica.adminEmail = valD2.toString().trim();
+    } catch (e1) {}
+
+    // Tabla de Horarios (Columnas E y F, Filas 4 a 9):
+    // E4: HORA ENTRADA             -> F4: 8:00
+    // E5: HORA SALIDA              -> F5: 17:00
+    // E6: RECORDATORIO DE ENTRADA  -> F6: 7:45
+    // E7: AVISO POR OLVIDO         -> F7: 8:30
+    // E8: AVISO PREVIO DE SALIDA   -> F8: 16:30
+    // E9: CIERRE AUTOMÁTICO (hora) -> F9: 17:30
+    try {
+      const valF4 = hojaConfig.getRange('F4').getValue();
+      const valF5 = hojaConfig.getRange('F5').getValue();
+      const valF6 = hojaConfig.getRange('F6').getValue();
+      const valF7 = hojaConfig.getRange('F7').getValue();
+      const valF8 = hojaConfig.getRange('F8').getValue();
+      const valF9 = hojaConfig.getRange('F9').getValue();
+
+      if (valF4 !== '') {
+        const f4Str = formatearHoraCadena(valF4, '08:00');
+        configDinamica.horaEntrada = parseInt(f4Str.split(':')[0], 10) || 8;
+      }
+      if (valF5 !== '') {
+        const f5Str = formatearHoraCadena(valF5, '17:00');
+        configDinamica.horaSalida = parseInt(f5Str.split(':')[0], 10) || 17;
+      }
+      if (valF6 !== '') {
+        configDinamica.recordatorioEntrada = formatearHoraCadena(valF6, configDinamica.recordatorioEntrada);
+      }
+      if (valF7 !== '') {
+        configDinamica.avisoOlvidoEntrada = formatearHoraCadena(valF7, configDinamica.avisoOlvidoEntrada);
+      }
+      if (valF8 !== '') {
+        configDinamica.avisoPrevioSalida = formatearHoraCadena(valF8, configDinamica.avisoPrevioSalida);
+      }
+      if (valF9 !== '') {
+        configDinamica.cierreAutomatico = formatearHoraCadena(valF9, configDinamica.cierreAutomatico);
+      }
+    } catch (e2) {}
+
+    // 2. ESCANEO DINÁMICO DE RESPALDO (Por si se insertan o mueven filas/columnas)
+    const maxFilas = Math.min(15, hojaConfig.getLastRow() || 10);
+    const maxCols = Math.min(8, hojaConfig.getLastColumn() || 6);
+    const datos = hojaConfig.getRange(1, 1, maxFilas, maxCols).getValues();
+
     for (let r = 0; r < datos.length; r++) {
-      for (let c = 0; c < datos[r].length; c += 2) {
+      for (let c = 0; c < datos[r].length; c++) {
         const val = (datos[r][c] || '').toString().toLowerCase().trim();
-        if (val.includes('latitud') && datos[r][c + 1]) {
-          const parsed = parseFloat(datos[r][c + 1]);
-          if (!isNaN(parsed)) configDinamica.latitud = parsed;
+        const valorDerecha = (c + 1 < datos[r].length) ? datos[r][c + 1] : '';
+        const valorAbajo = (r + 1 < datos.length) ? datos[r + 1][c] : '';
+        const valorParam = valorDerecha !== '' ? valorDerecha : valorAbajo;
+
+        if (val.includes('latitud') && valorParam !== '') {
+          const p = parseFloat(valorParam);
+          if (!isNaN(p)) configDinamica.latitud = p;
         }
-        if (val.includes('longitud') && datos[r][c + 1]) {
-          const parsed = parseFloat(datos[r][c + 1]);
-          if (!isNaN(parsed)) configDinamica.longitud = parsed;
+        if (val.includes('longitud') && valorParam !== '') {
+          const p = parseFloat(valorParam);
+          if (!isNaN(p)) configDinamica.longitud = p;
         }
-        if (val.includes('radio') && datos[r][c + 1]) {
-          const parsed = parseFloat(datos[r][c + 1]);
-          if (!isNaN(parsed)) {
-            configDinamica.radioMaxKm = parsed > 1 ? parsed / 1000 : parsed;
-          }
+        if (val.includes('radio') && valorParam !== '') {
+          const p = parseFloat(valorParam);
+          if (!isNaN(p)) configDinamica.radioMaxKm = p > 1 ? p / 1000 : p;
         }
-        if (val.includes('vercel') && datos[r][c + 1]) {
-          configDinamica.urlVercelPush = datos[r][c + 1].toString().trim();
+        if ((val.includes('railway') || val.includes('push') || val.includes('servidor')) && valorParam !== '') {
+          configDinamica.urlPushServer = valorParam.toString().trim();
+        }
+        if (val.includes('recordatorio') && val.includes('entrada') && valorParam !== '') {
+          configDinamica.recordatorioEntrada = formatearHoraCadena(valorParam, configDinamica.recordatorioEntrada);
+        }
+        if (val.includes('olvido') && valorParam !== '') {
+          configDinamica.avisoOlvidoEntrada = formatearHoraCadena(valorParam, configDinamica.avisoOlvidoEntrada);
+        }
+        if (val.includes('previo') && val.includes('salida') && valorParam !== '') {
+          configDinamica.avisoPrevioSalida = formatearHoraCadena(valorParam, configDinamica.avisoPrevioSalida);
+        }
+        if (val.includes('cierre') && valorParam !== '') {
+          configDinamica.cierreAutomatico = formatearHoraCadena(valorParam, configDinamica.cierreAutomatico);
         }
       }
     }
